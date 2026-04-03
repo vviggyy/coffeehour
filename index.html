@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Coffee Hour</title>
+  <link rel="icon"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>&#9749;</text></svg>">
+  <meta name="theme-color" content="#3C2415">
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Coffee Hour</h1>
+      <div class="subtitle">Wu Tsai Institute &middot; 2 &ndash; 3 pm Daily</div>
+    </div>
+
+    <!-- Estimator -->
+    <div class="card">
+      <div class="input-row">
+        <div class="input-group">
+          <label>People ahead of you</label>
+          <input type="number" id="estPeople" min="0" max="50" value="8" oninput="updateEstimate()">
+        </div>
+        <div class="input-group">
+          <label>Current time</label>
+          <input type="time" id="estTime" oninput="updateEstimate()">
+        </div>
+      </div>
+      <div class="estimate-display">
+        <div class="time" id="estMinutes">~12</div>
+        <div class="unit">minutes</div>
+        <div class="note" id="estNote">based on 10 logged visits</div>
+      </div>
+    </div>
+
+    <!-- Log toggle -->
+    <button class="btn-log" id="logToggle" onclick="toggleLogForm()">LOG YOUR VISIT</button>
+
+    <!-- Log form -->
+    <div class="card log-form" id="logForm">
+      <div class="form-grid">
+        <div class="input-group">
+          <label>Date</label>
+          <input type="date" id="logDate">
+        </div>
+        <div class="input-group">
+          <label>Joined line at</label>
+          <input type="time" id="logArrival">
+        </div>
+        <div class="input-group">
+          <label>Got coffee at</label>
+          <input type="time" id="logCoffee">
+        </div>
+        <div class="input-group">
+          <label>People ahead</label>
+          <input type="number" id="logPeople" min="0" max="50" value="0">
+        </div>
+        <div class="input-group">
+          <label>Refills during wait</label>
+          <input type="number" id="logRefills" min="0" max="10" value="0">
+        </div>
+      </div>
+      <button class="btn-submit" id="btnSubmit" onclick="submitVisit()">Submit</button>
+      <div id="statusMsg"></div>
+    </div>
+
+    <!-- Chart -->
+    <h2>Wait Time vs. Line Length</h2>
+    <div class="chart-container">
+      <canvas id="scatterChart"></canvas>
+    </div>
+
+    <!-- Recent logs -->
+    <h2>Recent Visits</h2>
+    <table id="recentTable">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>People</th>
+          <th>Wait</th>
+          <th>Refills</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td colspan="4" class="loading">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    // ── State ──
+    let allData = [];
+    let regression = { a: 0, b: 1.5 }; // fallback: ~1.5 min/person
+    let chart = null;
+
+    // ── Seed data (used when API unavailable, e.g. local dev) ──
+    const SEED_DATA = [
+      { date: "2026-03-31", arrival_time: "14:05", coffee_time: "14:14", people_ahead: "6", refills: "0" },
+      { date: "2026-03-31", arrival_time: "14:10", coffee_time: "14:22", people_ahead: "8", refills: "1" },
+      { date: "2026-03-31", arrival_time: "14:20", coffee_time: "14:28", people_ahead: "5", refills: "0" },
+      { date: "2026-04-01", arrival_time: "14:02", coffee_time: "14:08", people_ahead: "4", refills: "0" },
+      { date: "2026-04-01", arrival_time: "14:15", coffee_time: "14:30", people_ahead: "10", refills: "1" },
+      { date: "2026-04-01", arrival_time: "14:25", coffee_time: "14:38", people_ahead: "9", refills: "1" },
+      { date: "2026-04-02", arrival_time: "14:00", coffee_time: "14:05", people_ahead: "3", refills: "0" },
+      { date: "2026-04-02", arrival_time: "14:12", coffee_time: "14:25", people_ahead: "9", refills: "1" },
+      { date: "2026-04-02", arrival_time: "14:30", coffee_time: "14:42", people_ahead: "7", refills: "0" },
+      { date: "2026-04-02", arrival_time: "14:45", coffee_time: "14:55", people_ahead: "6", refills: "1" },
+    ];
+
+    // ── Init ──
+    document.addEventListener("DOMContentLoaded", () => {
+      generateSplatters();
+      setDefaultTimes();
+      loadData();
+    });
+
+    // ── Coffee splatters ──
+    function generateSplatters() {
+      const count = 18;
+      const colors = [
+        "rgba(111, 78, 55, 0.07)",
+        "rgba(111, 78, 55, 0.05)",
+        "rgba(60, 36, 21, 0.04)",
+        "rgba(210, 166, 121, 0.08)",
+        "rgba(139, 111, 92, 0.06)",
+      ];
+      for (let i = 0; i < count; i++) {
+        const el = document.createElement("div");
+        el.className = "coffee-splatter";
+        const size = 20 + Math.random() * 120;
+        el.style.width = size + "px";
+        el.style.height = size + "px";
+        el.style.left = Math.random() * 100 + "vw";
+        el.style.top = Math.random() * 100 + "vh";
+        el.style.background = colors[Math.floor(Math.random() * colors.length)];
+        // Some splatters are more elongated
+        if (Math.random() > 0.6) {
+          el.style.borderRadius = `${30 + Math.random() * 40}% ${40 + Math.random() * 30}% ${30 + Math.random() * 40}% ${40 + Math.random() * 30}%`;
+        }
+        document.body.appendChild(el);
+      }
+    }
+
+    // ── Defaults ──
+    function setDefaultTimes() {
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, "0");
+      const mm = String(now.getMinutes()).padStart(2, "0");
+      const timeStr = `${hh}:${mm}`;
+      const dateStr = now.toISOString().split("T")[0];
+
+      document.getElementById("estTime").value = timeStr;
+      document.getElementById("logDate").value = dateStr;
+      document.getElementById("logArrival").value = timeStr;
+    }
+
+    // ── Data loading ──
+    async function loadData() {
+      try {
+        const resp = await fetch("/api/log-visit");
+        if (!resp.ok) throw new Error("API error");
+        const json = await resp.json();
+        allData = json.data;
+      } catch {
+        // Fallback to seed data for local dev
+        allData = SEED_DATA;
+      }
+      computeRegression();
+      updateEstimate();
+      renderChart();
+      renderTable();
+    }
+
+    // ── Regression: wait_minutes = a + b * people_ahead ──
+    function waitMinutes(row) {
+      const [ah, am] = row.arrival_time.split(":").map(Number);
+      const [ch, cm] = row.coffee_time.split(":").map(Number);
+      return (ch * 60 + cm) - (ah * 60 + am);
+    }
+
+    function computeRegression() {
+      const points = allData.map(r => ({
+        x: parseInt(r.people_ahead),
+        y: waitMinutes(r),
+      })).filter(p => p.y > 0 && p.y < 60);
+
+      if (points.length < 3) {
+        regression = { a: 0, b: 1.5 };
+        return;
+      }
+
+      const n = points.length;
+      const sumX = points.reduce((s, p) => s + p.x, 0);
+      const sumY = points.reduce((s, p) => s + p.y, 0);
+      const sumXY = points.reduce((s, p) => s + p.x * p.y, 0);
+      const sumXX = points.reduce((s, p) => s + p.x * p.x, 0);
+
+      const denom = n * sumXX - sumX * sumX;
+      if (denom === 0) {
+        regression = { a: 0, b: 1.5 };
+        return;
+      }
+
+      const b = (n * sumXY - sumX * sumY) / denom;
+      const a = (sumY - b * sumX) / n;
+      regression = { a, b };
+    }
+
+    // ── Estimator ──
+    function updateEstimate() {
+      const people = parseInt(document.getElementById("estPeople").value) || 0;
+      const est = Math.max(0, Math.round(regression.a + regression.b * people));
+      document.getElementById("estMinutes").textContent = `~${est}`;
+
+      const count = allData.length;
+      const note = count > 0
+        ? `based on ${count} logged visit${count === 1 ? "" : "s"}`
+        : "using default estimate (~1.5 min/person)";
+      document.getElementById("estNote").textContent = note;
+    }
+
+    // ── Chart ──
+    function renderChart() {
+      const points = allData.map(r => ({
+        x: parseInt(r.people_ahead),
+        y: waitMinutes(r),
+      })).filter(p => p.y > 0 && p.y < 60);
+
+      // Regression line endpoints
+      const maxX = Math.max(15, ...points.map(p => p.x));
+      const linePoints = [
+        { x: 0, y: Math.max(0, regression.a) },
+        { x: maxX, y: regression.a + regression.b * maxX },
+      ];
+
+      const ctx = document.getElementById("scatterChart").getContext("2d");
+
+      if (chart) chart.destroy();
+
+      chart = new Chart(ctx, {
+        type: "scatter",
+        data: {
+          datasets: [
+            {
+              label: "Logged visits",
+              data: points,
+              backgroundColor: "rgba(111, 78, 55, 0.6)",
+              borderColor: "rgba(111, 78, 55, 0.8)",
+              pointRadius: 6,
+              pointHoverRadius: 8,
+            },
+            {
+              label: "Trend",
+              data: linePoints,
+              type: "line",
+              borderColor: "rgba(210, 166, 121, 0.8)",
+              borderWidth: 2,
+              borderDash: [6, 3],
+              pointRadius: 0,
+              fill: false,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            x: {
+              title: { display: true, text: "People ahead in line", color: "#8B6F5C", font: { weight: 600 } },
+              grid: { color: "rgba(60, 36, 21, 0.06)" },
+              ticks: { color: "#8B6F5C" },
+              min: 0,
+            },
+            y: {
+              title: { display: true, text: "Wait time (min)", color: "#8B6F5C", font: { weight: 600 } },
+              grid: { color: "rgba(60, 36, 21, 0.06)" },
+              ticks: { color: "#8B6F5C" },
+              min: 0,
+            },
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: "#3C2415",
+              titleColor: "#faf7f2",
+              bodyColor: "#D2A679",
+              callbacks: {
+                label: ctx => `${ctx.parsed.x} people, ${ctx.parsed.y} min wait`,
+              },
+            },
+          },
+        },
+      });
+    }
+
+    // ── Table ──
+    function renderTable() {
+      const tbody = document.querySelector("#recentTable tbody");
+      const recent = [...allData].reverse().slice(0, 10);
+
+      if (recent.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="loading">No data yet</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = recent.map(r => {
+        const wait = waitMinutes(r);
+        return `<tr>
+          <td>${r.date}</td>
+          <td>${r.people_ahead}</td>
+          <td>${wait} min</td>
+          <td>${r.refills}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    // ── Log form ──
+    function toggleLogForm() {
+      const form = document.getElementById("logForm");
+      const btn = document.getElementById("logToggle");
+      const visible = form.classList.toggle("visible");
+      btn.classList.toggle("active", visible);
+      btn.textContent = visible ? "CANCEL" : "LOG YOUR VISIT";
+    }
+
+    async function submitVisit() {
+      const date = document.getElementById("logDate").value;
+      const arrival = document.getElementById("logArrival").value;
+      const coffee = document.getElementById("logCoffee").value;
+      const people = document.getElementById("logPeople").value;
+      const refills = document.getElementById("logRefills").value;
+
+      if (!date || !arrival || !coffee || people === "") {
+        showStatus("Please fill in all fields", "error");
+        return;
+      }
+
+      const btn = document.getElementById("btnSubmit");
+      btn.disabled = true;
+      btn.textContent = "Submitting...";
+
+      try {
+        const resp = await fetch("/api/log-visit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            date,
+            arrival_time: arrival,
+            coffee_time: coffee,
+            people_ahead: parseInt(people),
+            refills: parseInt(refills),
+          }),
+        });
+
+        const json = await resp.json();
+        if (!resp.ok) throw new Error(json.error || "Failed");
+
+        showStatus("Visit logged! Thanks for the data.", "success");
+        // Add to local state and re-render
+        allData.push({
+          date, arrival_time: arrival, coffee_time: coffee,
+          people_ahead: String(people), refills: String(refills),
+        });
+        computeRegression();
+        updateEstimate();
+        renderChart();
+        renderTable();
+
+        // Reset form
+        document.getElementById("logCoffee").value = "";
+        document.getElementById("logPeople").value = "0";
+        document.getElementById("logRefills").value = "0";
+      } catch (err) {
+        showStatus("Error: " + err.message, "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Submit";
+      }
+    }
+
+    function showStatus(msg, type) {
+      const el = document.getElementById("statusMsg");
+      el.textContent = msg;
+      el.className = type;
+      setTimeout(() => { el.className = ""; el.style.display = "none"; }, 4000);
+    }
+  </script>
+</body>
+
+</html>
