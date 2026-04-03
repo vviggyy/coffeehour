@@ -130,16 +130,18 @@ h2 {
 
 .input-group input {
   width: 100%;
-  padding: 0.6rem 0.75rem;
+  padding: 0.75rem;
   background: #faf7f2;
   border: 1.5px solid #D2A679;
   border-radius: 10px;
   color: #3C2415;
   font-family: inherit;
-  font-size: 0.95rem;
+  font-size: 16px; /* prevents iOS zoom on focus */
   font-weight: 500;
   outline: none;
   transition: border-color 0.15s ease;
+  -webkit-appearance: none;
+  min-height: 48px; /* comfortable touch target */
 }
 
 .input-group input:focus {
@@ -150,8 +152,9 @@ h2 {
 .btn-log {
   display: block;
   width: 100%;
-  padding: 0.85rem;
+  padding: 1rem;
   margin-bottom: 1rem;
+  min-height: 52px;
   background: #3C2415;
   color: #faf7f2;
   border: none;
@@ -194,7 +197,8 @@ h2 {
 
 .btn-submit {
   width: 100%;
-  padding: 0.75rem;
+  padding: 1rem;
+  min-height: 52px;
   background: linear-gradient(135deg, #6F4E37 0%, #3C2415 100%);
   color: #faf7f2;
   border: none;
@@ -300,7 +304,7 @@ tbody tr:last-child td {
 /* Mobile */
 @media (max-width: 640px) {
   .container {
-    padding: 1rem;
+    padding: 0.75rem;
   }
 
   .header h1 {
@@ -313,14 +317,30 @@ tbody tr:last-child td {
 
   .form-grid {
     grid-template-columns: 1fr;
+    gap: 0.5rem;
   }
 
   .input-row {
     flex-direction: column;
+    gap: 0.5rem;
   }
 
   .chart-container {
-    height: 300px;
-    padding: 1rem;
+    height: 280px;
+    padding: 0.75rem;
   }
+
+  th, td {
+    padding: 0.6rem 0.5rem;
+    font-size: 0.8rem;
+  }
+}
+
+/* Prevent double-tap zoom on buttons */
+button {
+  touch-action: manipulation;
+}
+
+input {
+  touch-action: manipulation;
 }
