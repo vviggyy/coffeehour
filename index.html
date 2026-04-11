@@ -215,7 +215,14 @@
 
       const b = (n * sumXY - sumX * sumY) / denom;
       const a = (sumY - b * sumX) / n;
-      regression = { a, b };
+
+      // Pearson r
+      const sumYY = points.reduce((s, p) => s + p.y * p.y, 0);
+      const rNum = n * sumXY - sumX * sumY;
+      const rDen = Math.sqrt((n * sumXX - sumX * sumX) * (n * sumYY - sumY * sumY));
+      const r = rDen === 0 ? 0 : rNum / rDen;
+
+      regression = { a, b, r, n };
     }
 
     // ── Time validation ──
@@ -357,6 +364,21 @@
             },
           },
         },
+        plugins: [{
+          id: "statsOverlay",
+          afterDraw(chart) {
+            const { ctx, chartArea: { right, top } } = chart;
+            const r = regression.r != null ? regression.r.toFixed(2) : "—";
+            const n = regression.n || points.length;
+            ctx.save();
+            ctx.font = "500 11px Inter, sans-serif";
+            ctx.fillStyle = "#8B6F5C";
+            ctx.textAlign = "right";
+            ctx.fillText(`r = ${r}`, right - 8, top + 16);
+            ctx.fillText(`n = ${n}`, right - 8, top + 30);
+            ctx.restore();
+          },
+        }],
       });
     }
 
