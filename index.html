@@ -255,6 +255,38 @@
       document.getElementById("estNote").textContent = note;
     }
 
+    // ── Coffee bean point style ──
+    function createCoffeeBean(size) {
+      const canvas = document.createElement("canvas");
+      const s = size || 16;
+      canvas.width = s;
+      canvas.height = s;
+      const ctx = canvas.getContext("2d");
+      const cx = s / 2, cy = s / 2, rx = s * 0.42, ry = s * 0.48;
+
+      // Bean shape (oval)
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+      ctx.fillStyle = "#6F4E37";
+      ctx.fill();
+      ctx.strokeStyle = "#3C2415";
+      ctx.lineWidth = s * 0.06;
+      ctx.stroke();
+
+      // Center crease
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - ry * 0.7);
+      ctx.bezierCurveTo(cx - rx * 0.35, cy - ry * 0.15, cx + rx * 0.35, cy + ry * 0.15, cx, cy + ry * 0.7);
+      ctx.strokeStyle = "#3C2415";
+      ctx.lineWidth = s * 0.08;
+      ctx.stroke();
+
+      return canvas;
+    }
+
+    const coffeeBeanImg = createCoffeeBean(18);
+    const coffeeBeanHoverImg = createCoffeeBean(24);
+
     // ── Chart ──
     function renderChart() {
       const points = allData.map(r => ({
@@ -280,10 +312,9 @@
             {
               label: "Logged visits",
               data: points,
-              backgroundColor: "rgba(111, 78, 55, 0.6)",
-              borderColor: "rgba(111, 78, 55, 0.8)",
-              pointRadius: 6,
-              pointHoverRadius: 8,
+              pointStyle: coffeeBeanImg,
+              pointHoverRadius: 12,
+              pointRadius: 9,
             },
             {
               label: "Trend",
