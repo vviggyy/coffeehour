@@ -13,6 +13,7 @@ body {
   min-height: 100vh;
   display: flex;
   justify-content: center;
+  align-items: flex-start;
   position: relative;
   overflow-x: hidden;
 }
@@ -256,6 +257,8 @@ h2 {
     0 4px 6px -1px rgba(60, 36, 21, 0.06),
     0 2px 4px -2px rgba(60, 36, 21, 0.04);
   border: 1px solid rgba(60, 36, 21, 0.08);
+  position: relative;
+  overflow: hidden;
 }
 
 /* Table */
@@ -270,6 +273,7 @@ table {
     0 4px 6px -1px rgba(60, 36, 21, 0.06),
     0 2px 4px -2px rgba(60, 36, 21, 0.04);
   border: 1px solid rgba(60, 36, 21, 0.08);
+  table-layout: fixed;
 }
 
 th, td {
@@ -321,7 +325,6 @@ tbody tr:last-child td {
   }
 
   .input-row {
-    flex-direction: column;
     gap: 0.5rem;
   }
 

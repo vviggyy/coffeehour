@@ -111,6 +111,12 @@
       { date: "2026-04-02", arrival_time: "14:12", coffee_time: "14:25", people_ahead: "9", refills: "1" },
       { date: "2026-04-02", arrival_time: "14:30", coffee_time: "14:42", people_ahead: "7", refills: "0" },
       { date: "2026-04-02", arrival_time: "14:45", coffee_time: "14:55", people_ahead: "6", refills: "1" },
+      { date: "2026-04-06", arrival_time: "14:45", coffee_time: "14:50", people_ahead: "5", refills: "0" },
+      { date: "2026-04-07", arrival_time: "14:43", coffee_time: "15:01", people_ahead: "17", refills: "1" },
+      { date: "2026-04-08", arrival_time: "14:45", coffee_time: "14:58", people_ahead: "13", refills: "1" },
+      { date: "2026-04-09", arrival_time: "14:50", coffee_time: "14:52", people_ahead: "1", refills: "0" },
+      { date: "2026-04-09", arrival_time: "14:52", coffee_time: "14:52", people_ahead: "1", refills: "0" },
+      { date: "2026-04-10", arrival_time: "14:39", coffee_time: "14:44", people_ahead: "9", refills: "1" },
     ];
 
     // ── Init ──
@@ -212,9 +218,33 @@
       regression = { a, b };
     }
 
+    // ── Time validation ──
+    function validateTime(timeStr) {
+      if (!timeStr) return null;
+      const [h, m] = timeStr.split(":").map(Number);
+      const mins = h * 60 + m;
+      if (mins < 13 * 60 + 30) return "early";
+      if (mins > 15 * 60 + 5) return "late";
+      return null;
+    }
+
     // ── Estimator ──
     function updateEstimate() {
       const people = parseInt(document.getElementById("estPeople").value) || 0;
+      const timeVal = document.getElementById("estTime").value;
+      const timeCheck = validateTime(timeVal);
+
+      if (timeCheck === "early") {
+        document.getElementById("estMinutes").textContent = "—";
+        document.getElementById("estNote").textContent = "You're really queueing ahead of time....";
+        return;
+      }
+      if (timeCheck === "late") {
+        document.getElementById("estMinutes").textContent = "—";
+        document.getElementById("estNote").textContent = "The coffee machine is probably closed...";
+        return;
+      }
+
       const est = Math.max(0, Math.round(regression.a + regression.b * people));
       document.getElementById("estMinutes").textContent = est;
 
@@ -338,6 +368,17 @@
 
       if (!date || !arrival || !coffee || people === "") {
         showStatus("Please fill in all fields", "error");
+        return;
+      }
+
+      const arrivalCheck = validateTime(arrival);
+      const coffeeCheck = validateTime(coffee);
+      if (arrivalCheck === "early" || coffeeCheck === "early") {
+        showStatus("You're really queueing ahead of time....", "error");
+        return;
+      }
+      if (arrivalCheck === "late" || coffeeCheck === "late") {
+        showStatus("The coffee machine is probably closed...", "error");
         return;
       }
 
