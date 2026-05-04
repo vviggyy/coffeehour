@@ -99,6 +99,21 @@
     <footer style="text-align:center; margin-top:2rem; padding:1.5rem 0 0.5rem; font-size:0.75rem; color:#B09A8A;">&copy; Viggy &amp; The Montagues</footer>
   </div>
 
+  <!-- Admin Password Modal -->
+  <div class="modal-overlay" id="adminModal" style="display:none">
+    <div class="modal">
+      <h3 class="modal-title">Admin Required</h3>
+      <p class="modal-subtitle">Enter the admin password to delete this visit.</p>
+      <div id="adminModalTarget" class="modal-target"></div>
+      <input type="password" id="adminPassword" class="admin-password-input" placeholder="Password" autocomplete="off">
+      <div id="adminModalError" class="modal-error" style="display:none"></div>
+      <div class="modal-actions">
+        <button class="btn-modal-cancel" onclick="cancelAdminModal()">Cancel</button>
+        <button class="btn-modal-confirm" id="adminConfirmBtn" onclick="confirmAdminModal()">Delete</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     // ── State ──
     let allData = [];
@@ -474,8 +489,10 @@
 
       tbody.innerHTML = recent.map(r => {
         const wait = waitMinutes(r);
+        const args = [r.date, r.arrival_time, r.coffee_time, r.people_ahead, r.refills]
+          .map(v => `'${String(v).replace(/'/g, "\\'")}'`).join(",");
         return `<tr>
-          <td>${r.date}</td>
+          <td>${r.date}<button class="btn-delete-visit" onclick="promptDeleteVisit(${args})" title="Delete visit">&times;</button></td>
           <td>${r.people_ahead}</td>
           <td>${wait} min</td>
           <td>${r.refills}</td>
@@ -558,6 +575,84 @@
         btn.textContent = "Submit";
       }
     }
+
+    // ── Admin delete visit ──
+    let _deleteTarget = null;
+
+    function promptDeleteVisit(date, arrival_time, coffee_time, people_ahead, refills) {
+      _deleteTarget = { date, arrival_time, coffee_time, people_ahead, refills };
+      const modal = document.getElementById("adminModal");
+      const pw = document.getElementById("adminPassword");
+      const err = document.getElementById("adminModalError");
+      const target = document.getElementById("adminModalTarget");
+      pw.value = "";
+      err.style.display = "none";
+      target.textContent = `${date} · arrived ${arrival_time} · ${people_ahead} people`;
+      modal.style.display = "";
+      pw.focus();
+    }
+
+    function cancelAdminModal() {
+      document.getElementById("adminModal").style.display = "none";
+      _deleteTarget = null;
+    }
+
+    async function confirmAdminModal() {
+      const password = document.getElementById("adminPassword").value;
+      const err = document.getElementById("adminModalError");
+      const btn = document.getElementById("adminConfirmBtn");
+      if (!password) {
+        err.textContent = "Enter a password";
+        err.style.display = "block";
+        return;
+      }
+      if (!_deleteTarget) return;
+
+      btn.disabled = true;
+      btn.textContent = "Deleting...";
+      err.style.display = "none";
+
+      try {
+        const resp = await fetch("/api/delete-visit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password, ..._deleteTarget }),
+        });
+        const result = await resp.json();
+        if (!resp.ok) throw new Error(result.error || "Server error");
+
+        // Remove first matching row from local state and re-render
+        const t = _deleteTarget;
+        const idx = allData.findIndex(r =>
+          r.date === t.date &&
+          r.arrival_time === t.arrival_time &&
+          r.coffee_time === t.coffee_time &&
+          String(r.people_ahead) === String(t.people_ahead) &&
+          String(r.refills) === String(t.refills)
+        );
+        if (idx >= 0) allData.splice(idx, 1);
+        computeRegression();
+        updateEstimate();
+        renderChart();
+        renderTimeChart();
+        renderTable();
+
+        document.getElementById("adminModal").style.display = "none";
+        _deleteTarget = null;
+      } catch (e) {
+        err.textContent = e.message;
+        err.style.display = "block";
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Delete";
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      document.getElementById("adminPassword").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") confirmAdminModal();
+      });
+    });
 
     function showStatus(msg, type) {
       const el = document.getElementById("statusMsg");

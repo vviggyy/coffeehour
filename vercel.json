@@ -2,6 +2,9 @@
   "functions": {
     "api/log-visit.py": {
       "runtime": "@vercel/python@4.3.1"
+    },
+    "api/delete-visit.py": {
+      "runtime": "@vercel/python@4.3.1"
     }
   }
 }
