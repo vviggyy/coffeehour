@@ -75,6 +75,12 @@
       <canvas id="scatterChart"></canvas>
     </div>
 
+    <!-- Wait time by arrival time bin -->
+    <h2>Avg Wait by Arrival Time</h2>
+    <div class="chart-container">
+      <canvas id="timeChart"></canvas>
+    </div>
+
     <!-- Recent logs -->
     <h2>Recent Visits</h2>
     <table id="recentTable">
@@ -98,6 +104,7 @@
     let allData = [];
     let regression = { a: 0, b: 1.5 }; // fallback: ~1.5 min/person
     let chart = null;
+    let timeChart = null;
 
     // ── Seed data (used when API unavailable, e.g. local dev) ──
     const SEED_DATA = [
@@ -180,6 +187,7 @@
       computeRegression();
       updateEstimate();
       renderChart();
+      renderTimeChart();
       renderTable();
     }
 
@@ -382,6 +390,88 @@
       });
     }
 
+    // ── Time-of-day histogram ──
+    function renderTimeChart() {
+      const BIN_MIN = 10;
+      const START = 14 * 60; // 14:00
+      const END = 15 * 60;   // 15:00
+      const binCount = (END - START) / BIN_MIN;
+      const sums = new Array(binCount).fill(0);
+      const counts = new Array(binCount).fill(0);
+
+      for (const r of allData) {
+        const wait = waitMinutes(r);
+        if (!(wait > 0 && wait < 60)) continue;
+        const [h, m] = r.arrival_time.split(":").map(Number);
+        const mins = h * 60 + m;
+        if (mins < START || mins >= END) continue;
+        const idx = Math.floor((mins - START) / BIN_MIN);
+        sums[idx] += wait;
+        counts[idx] += 1;
+      }
+
+      const labels = [];
+      for (let i = 0; i < binCount; i++) {
+        const start = START + i * BIN_MIN;
+        const sh = String(Math.floor(start / 60)).padStart(2, "0");
+        const sm = String(start % 60).padStart(2, "0");
+        labels.push(`${sh}:${sm}`);
+      }
+      const avgs = sums.map((s, i) => counts[i] ? s / counts[i] : 0);
+
+      const ctx = document.getElementById("timeChart").getContext("2d");
+      if (timeChart) timeChart.destroy();
+
+      timeChart = new Chart(ctx, {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [{
+            label: "Avg wait (min)",
+            data: avgs,
+            backgroundColor: "rgba(160, 120, 85, 0.75)",
+            borderColor: "#6F4E37",
+            borderWidth: 1,
+            borderRadius: 4,
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            x: {
+              title: { display: true, text: "Arrival time", color: "#8B6F5C", font: { weight: 600 } },
+              grid: { display: false },
+              ticks: { color: "#8B6F5C" },
+            },
+            y: {
+              title: { display: true, text: "Avg wait (min)", color: "#8B6F5C", font: { weight: 600 } },
+              grid: { color: "rgba(60, 36, 21, 0.06)" },
+              ticks: { color: "#8B6F5C" },
+              min: 0,
+            },
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: "#3C2415",
+              titleColor: "#faf7f2",
+              bodyColor: "#D2A679",
+              callbacks: {
+                title: items => items[0].label,
+                label: ctx => {
+                  const i = ctx.dataIndex;
+                  const n = counts[i];
+                  if (!n) return "no data";
+                  return `${avgs[i].toFixed(1)} min avg (n=${n})`;
+                },
+              },
+            },
+          },
+        },
+      });
+    }
+
     // ── Table ──
     function renderTable() {
       const tbody = document.querySelector("#recentTable tbody");
@@ -464,6 +554,7 @@
         computeRegression();
         updateEstimate();
         renderChart();
+        renderTimeChart();
         renderTable();
 
         // Reset form
