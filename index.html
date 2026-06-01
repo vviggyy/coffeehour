@@ -75,8 +75,18 @@
       <canvas id="scatterChart"></canvas>
     </div>
 
+    <!-- Residuals: actual − predicted, to surface model fit honestly -->
+    <h2>Residuals
+      <span class="chart-subtitle">actual − predicted wait, per visit · points near zero mean the model fits well</span>
+    </h2>
+    <div class="chart-container chart-short">
+      <canvas id="residualChart"></canvas>
+    </div>
+
     <!-- Wait time by arrival time bin -->
-    <h2>Avg Wait by Arrival Time</h2>
+    <h2>Wait by Arrival Time
+      <span class="chart-subtitle">descriptive only — bars are confounded by how busy each time-bin is, not a causal arrival → wait effect</span>
+    </h2>
     <div class="chart-container">
       <canvas id="timeChart"></canvas>
     </div>
@@ -122,6 +132,7 @@
     let regression = { b0: 0, b_people: 1.5, b_arrival: 0, b_refill: 0, p_refill: 0, meanArrival: 0, rSquared: null, n: 0 };
     let chart = null;
     let timeChart = null;
+    let residualChart = null;
 
     const ARRIVAL_REF_MIN = 13 * 60 + 45; // minutes since midnight for 1:45 PM
 
@@ -196,6 +207,7 @@
       computeRegression();
       updateEstimate();
       renderChart();
+      renderResidualChart();
       renderTimeChart();
       renderTable();
     }
@@ -370,7 +382,10 @@
     }
 
     // ── Coffee bean point style ──
-    function createCoffeeBean(size) {
+    // Two variants: "light" tan bean for refill=0, "dark" espresso bean for refill=1.
+    // This lets the scatter plot show the refill lift directly: dark beans should sit
+    // slightly above the trend, light beans slightly below.
+    function createCoffeeBean(size, dark) {
       const canvas = document.createElement("canvas");
       const s = size || 16;
       canvas.width = s;
@@ -378,40 +393,47 @@
       const ctx = canvas.getContext("2d");
       const cx = s / 2, cy = s / 2, rx = s * 0.42, ry = s * 0.48;
 
-      // Bean shape (oval)
+      const fill = dark ? "#3C2415" : "#A07855";
+      const stroke = dark ? "#1F0F08" : "#6F4E37";
+      const crease = dark ? "#D2A679" : "#6F4E37";
+
       ctx.beginPath();
       ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-      ctx.fillStyle = "#A07855";
+      ctx.fillStyle = fill;
       ctx.fill();
-      ctx.strokeStyle = "#6F4E37";
+      ctx.strokeStyle = stroke;
       ctx.lineWidth = s * 0.06;
       ctx.stroke();
 
-      // Center crease
       ctx.beginPath();
       ctx.moveTo(cx, cy - ry * 0.7);
       ctx.bezierCurveTo(cx - rx * 0.35, cy - ry * 0.15, cx + rx * 0.35, cy + ry * 0.15, cx, cy + ry * 0.7);
-      ctx.strokeStyle = "#6F4E37";
+      ctx.strokeStyle = crease;
       ctx.lineWidth = s * 0.08;
       ctx.stroke();
 
       return canvas;
     }
 
-    const coffeeBeanImg = createCoffeeBean(18);
-    const coffeeBeanHoverImg = createCoffeeBean(24);
+    const coffeeBeanImg = createCoffeeBean(18, false);
+    const coffeeBeanDarkImg = createCoffeeBean(18, true);
 
     // ── Chart ──
     function renderChart() {
-      const points = allData.map(r => ({
-        x: parseInt(r.people_ahead),
-        y: waitMinutes(r),
-      })).filter(p => p.y > 0 && p.y < 60);
+      const pointsNoRefill = [];
+      const pointsRefill = [];
+      for (const r of allData) {
+        const x = parseInt(r.people_ahead);
+        const y = waitMinutes(r);
+        if (!(y > 0 && y < 60) || isNaN(x)) continue;
+        (parseInt(r.refills) > 0 ? pointsRefill : pointsNoRefill).push({ x, y });
+      }
+      const allPoints = [...pointsNoRefill, ...pointsRefill];
 
       // Trend line: slice through the multivariate surface at mean arrival_time and the
       // expected refill contribution (b_refill · p_refill). This is the most honest 2D
       // representation of a 4-parameter model when only people_ahead varies on the x-axis.
-      const maxX = Math.max(15, ...points.map(p => p.x));
+      const maxX = Math.max(15, ...allPoints.map(p => p.x));
       const yAt = (x) =>
         regression.b0
         + regression.b_people * x
@@ -431,14 +453,21 @@
         data: {
           datasets: [
             {
-              label: "Logged visits",
-              data: points,
+              label: "No refill",
+              data: pointsNoRefill,
               pointStyle: coffeeBeanImg,
               pointHoverRadius: 12,
               pointRadius: 9,
             },
             {
-              label: "Trend",
+              label: "Refill during wait",
+              data: pointsRefill,
+              pointStyle: coffeeBeanDarkImg,
+              pointHoverRadius: 12,
+              pointRadius: 9,
+            },
+            {
+              label: "Trend (expected wait)",
               data: linePoints,
               type: "line",
               borderColor: "rgba(210, 166, 121, 0.8)",
@@ -467,13 +496,27 @@
             },
           },
           plugins: {
-            legend: { display: false },
+            legend: {
+              display: true,
+              position: "bottom",
+              labels: {
+                usePointStyle: true,
+                color: "#8B6F5C",
+                font: { size: 11 },
+                boxWidth: 8,
+                padding: 14,
+                filter: (item) => item.text !== "Trend (expected wait)",
+              },
+            },
             tooltip: {
               backgroundColor: "#3C2415",
               titleColor: "#faf7f2",
               bodyColor: "#D2A679",
               callbacks: {
-                label: ctx => `${ctx.parsed.x} people, ${ctx.parsed.y} min wait`,
+                label: ctx => {
+                  const refill = ctx.dataset.label === "Refill during wait" ? " · refill" : "";
+                  return `${ctx.parsed.x} people, ${ctx.parsed.y} min${refill}`;
+                },
               },
             },
           },
@@ -483,7 +526,7 @@
           afterDraw(chart) {
             const { ctx, chartArea: { right, top } } = chart;
             const rSq = regression.rSquared != null ? regression.rSquared.toFixed(2) : "—";
-            const n = regression.n || points.length;
+            const n = regression.n || allPoints.length;
             ctx.save();
             ctx.font = "500 11px Inter, sans-serif";
             ctx.fillStyle = "#8B6F5C";
@@ -493,6 +536,100 @@
             ctx.restore();
           },
         }],
+      });
+    }
+
+    // ── Residuals chart: actual − predicted vs people_ahead ──
+    // Points near y=0 mean the model fits well at that line length. Systematic drift
+    // (e.g. residuals trending up at high people_ahead) would suggest heteroscedasticity
+    // or a non-linear effect the linear model isn't capturing.
+    function renderResidualChart() {
+      const noRefill = [];
+      const refill = [];
+      for (const r of allData) {
+        const people = parseInt(r.people_ahead);
+        const wait = waitMinutes(r);
+        const refillFlag = parseInt(r.refills) > 0 ? 1 : 0;
+        if (!(wait > 0 && wait < 60) || isNaN(people)) continue;
+        const arrival = arrivalMinutes(r.arrival_time);
+        const pred = regression.b0
+          + regression.b_people * people
+          + regression.b_arrival * arrival
+          + regression.b_refill * refillFlag;
+        const point = { x: people, y: wait - pred };
+        (refillFlag ? refill : noRefill).push(point);
+      }
+      const maxX = Math.max(15, ...noRefill.map(p => p.x), ...refill.map(p => p.x));
+      const allRes = [...noRefill, ...refill].map(p => Math.abs(p.y));
+      const maxAbs = Math.max(2, ...allRes);
+
+      const ctx = document.getElementById("residualChart").getContext("2d");
+      if (residualChart) residualChart.destroy();
+
+      residualChart = new Chart(ctx, {
+        type: "scatter",
+        data: {
+          datasets: [
+            {
+              label: "No refill",
+              data: noRefill,
+              pointStyle: coffeeBeanImg,
+              pointRadius: 6,
+              pointHoverRadius: 9,
+            },
+            {
+              label: "Refill",
+              data: refill,
+              pointStyle: coffeeBeanDarkImg,
+              pointRadius: 6,
+              pointHoverRadius: 9,
+            },
+            {
+              label: "zero",
+              type: "line",
+              data: [{ x: 0, y: 0 }, { x: maxX, y: 0 }],
+              borderColor: "rgba(139, 111, 92, 0.5)",
+              borderWidth: 1,
+              borderDash: [4, 4],
+              pointRadius: 0,
+              fill: false,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            x: {
+              title: { display: true, text: "People ahead", color: "#8B6F5C", font: { size: 10, weight: 600 } },
+              grid: { color: "rgba(60, 36, 21, 0.05)" },
+              ticks: { color: "#8B6F5C", font: { size: 10 } },
+              min: 0,
+              max: maxX,
+            },
+            y: {
+              title: { display: true, text: "Residual (min)", color: "#8B6F5C", font: { size: 10, weight: 600 } },
+              grid: { color: "rgba(60, 36, 21, 0.05)" },
+              ticks: { color: "#8B6F5C", font: { size: 10 } },
+              min: -maxAbs,
+              max: maxAbs,
+            },
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: "#3C2415",
+              titleColor: "#faf7f2",
+              bodyColor: "#D2A679",
+              callbacks: {
+                label: ctx => {
+                  const sign = ctx.parsed.y >= 0 ? "+" : "";
+                  return `${ctx.parsed.x} people · ${sign}${ctx.parsed.y.toFixed(1)} min vs predicted`;
+                },
+              },
+            },
+          },
+        },
       });
     }
 

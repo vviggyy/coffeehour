@@ -261,6 +261,23 @@ h2 {
   overflow: hidden;
 }
 
+.chart-container.chart-short {
+  height: 180px;
+  padding: 1rem 1.5rem;
+  margin-top: -0.5rem;
+}
+
+.chart-subtitle {
+  display: block;
+  font-size: 0.65rem;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  color: #B09A8A;
+  margin-top: 0.25rem;
+  font-style: italic;
+}
+
 /* Table */
 table {
   width: 100%;
@@ -331,6 +348,11 @@ tbody tr:last-child td {
   .chart-container {
     height: 280px;
     padding: 0.75rem;
+  }
+
+  .chart-container.chart-short {
+    height: 140px;
+    padding: 0.6rem 0.75rem;
   }
 
   th, td {
