@@ -117,9 +117,13 @@
   <script>
     // ── State ──
     let allData = [];
-    let regression = { a: 0, b: 1.5 }; // fallback: ~1.5 min/person
+    // Multivariate OLS: wait = b0 + b_people·people + b_arrival·(min after 1:45) + b_refill·refill
+    // p_refill is the empirical probability of a refill, used to marginalize at prediction time.
+    let regression = { b0: 0, b_people: 1.5, b_arrival: 0, b_refill: 0, p_refill: 0, meanArrival: 0, rSquared: null, n: 0 };
     let chart = null;
     let timeChart = null;
+
+    const ARRIVAL_REF_MIN = 13 * 60 + 45; // minutes since midnight for 1:45 PM
 
     // ── Seed data (used when API unavailable, e.g. local dev) ──
     const SEED_DATA = [
@@ -196,46 +200,124 @@
       renderTable();
     }
 
-    // ── Regression: wait_minutes = a + b * people_ahead ──
+    // ── Regression: multivariate OLS ──
+    // wait = b0 + b_people·people + b_arrival·(arrival_min_after_1:45) + b_refill·refill
+    // Refills are observed (0/1) in training rows. At prediction time we don't know if a refill
+    // will happen, so we marginalize: E[wait] = base + b_refill · p_refill, where p_refill is
+    // the empirical refill rate. The "if refill happens" delta surfaces as a risk note in the UI.
     function waitMinutes(row) {
       const [ah, am] = row.arrival_time.split(":").map(Number);
       const [ch, cm] = row.coffee_time.split(":").map(Number);
       return (ch * 60 + cm) - (ah * 60 + am);
     }
 
+    function arrivalMinutes(timeStr) {
+      if (!timeStr) return 0;
+      const [h, m] = timeStr.split(":").map(Number);
+      return (h * 60 + m) - ARRIVAL_REF_MIN;
+    }
+
+    // Solve Aβ = b for square A via Gauss-Jordan with partial pivoting. Returns null if singular.
+    function solveLinearSystem(A, b) {
+      const n = A.length;
+      const M = A.map((row, i) => [...row, b[i]]);
+      for (let i = 0; i < n; i++) {
+        let piv = i;
+        for (let k = i + 1; k < n; k++) {
+          if (Math.abs(M[k][i]) > Math.abs(M[piv][i])) piv = k;
+        }
+        [M[i], M[piv]] = [M[piv], M[i]];
+        if (Math.abs(M[i][i]) < 1e-12) return null;
+        for (let k = 0; k < n; k++) {
+          if (k === i) continue;
+          const f = M[k][i] / M[i][i];
+          for (let j = i; j <= n; j++) M[k][j] -= f * M[i][j];
+        }
+      }
+      return M.map((row, i) => row[n] / row[i]);
+    }
+
     function computeRegression() {
-      const points = allData.map(r => ({
-        x: parseInt(r.people_ahead),
-        y: waitMinutes(r),
-      })).filter(p => p.y > 0 && p.y < 60);
+      const rows = allData.map(r => ({
+        wait: waitMinutes(r),
+        people: parseInt(r.people_ahead),
+        arrival: arrivalMinutes(r.arrival_time),
+        refill: parseInt(r.refills) > 0 ? 1 : 0,
+      })).filter(r => r.wait > 0 && r.wait < 60 && !isNaN(r.people));
 
-      if (points.length < 3) {
-        regression = { a: 0, b: 1.5 };
+      const n = rows.length;
+      const pRefill = n ? rows.reduce((s, r) => s + r.refill, 0) / n : 0;
+      const meanArrival = n ? rows.reduce((s, r) => s + r.arrival, 0) / n : 0;
+
+      // Sample-size tiering. With few rows the multivariate fit is statistically junk —
+      // wildly overfit coefficients that don't survive the next data point. Fall back to
+      // simpler models when n is small, so the displayed estimate stays sane.
+      if (n < 3) {
+        regression = { b0: 0, b_people: 1.5, b_arrival: 0, b_refill: 0, p_refill: pRefill, meanArrival, rSquared: null, n };
         return;
       }
 
-      const n = points.length;
-      const sumX = points.reduce((s, p) => s + p.x, 0);
-      const sumY = points.reduce((s, p) => s + p.y, 0);
-      const sumXY = points.reduce((s, p) => s + p.x * p.y, 0);
-      const sumXX = points.reduce((s, p) => s + p.x * p.x, 0);
-
-      const denom = n * sumXX - sumX * sumX;
-      if (denom === 0) {
-        regression = { a: 0, b: 1.5 };
+      if (n < 8) {
+        // Univariate fallback: wait ≈ a + b·people
+        const sumX = rows.reduce((s, r) => s + r.people, 0);
+        const sumY = rows.reduce((s, r) => s + r.wait, 0);
+        const sumXY = rows.reduce((s, r) => s + r.people * r.wait, 0);
+        const sumXX = rows.reduce((s, r) => s + r.people * r.people, 0);
+        const denom = n * sumXX - sumX * sumX;
+        if (denom !== 0) {
+          const bP = (n * sumXY - sumX * sumY) / denom;
+          const b0 = (sumY - bP * sumX) / n;
+          const yMean = sumY / n;
+          let ssTot = 0, ssRes = 0;
+          for (const r of rows) {
+            ssTot += (r.wait - yMean) ** 2;
+            ssRes += (r.wait - (b0 + bP * r.people)) ** 2;
+          }
+          const rSq = ssTot > 0 ? 1 - ssRes / ssTot : null;
+          regression = { b0, b_people: bP, b_arrival: 0, b_refill: 0, p_refill: pRefill, meanArrival, rSquared: rSq, n };
+          return;
+        }
+        regression = { b0: 0, b_people: 1.5, b_arrival: 0, b_refill: 0, p_refill: pRefill, meanArrival, rSquared: null, n };
         return;
       }
 
-      const b = (n * sumXY - sumX * sumY) / denom;
-      const a = (sumY - b * sumX) / n;
+      // Build XᵀX (4×4) and Xᵀy (4×1) for design matrix [1, people, arrival, refill]
+      const XtX = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]];
+      const Xty = [0,0,0,0];
+      for (const r of rows) {
+        const f = [1, r.people, r.arrival, r.refill];
+        for (let a = 0; a < 4; a++) {
+          Xty[a] += f[a] * r.wait;
+          for (let b = 0; b < 4; b++) XtX[a][b] += f[a] * f[b];
+        }
+      }
 
-      // Pearson r
-      const sumYY = points.reduce((s, p) => s + p.y * p.y, 0);
-      const rNum = n * sumXY - sumX * sumY;
-      const rDen = Math.sqrt((n * sumXX - sumX * sumX) * (n * sumYY - sumY * sumY));
-      const r = rDen === 0 ? 0 : rNum / rDen;
+      const beta = solveLinearSystem(XtX, Xty);
+      if (!beta) {
+        regression = { b0: 0, b_people: 1.5, b_arrival: 0, b_refill: 0, p_refill: pRefill, meanArrival, rSquared: null, n };
+        return;
+      }
 
-      regression = { a, b, r, n };
+      // Multiple R²
+      const yMean = rows.reduce((s, r) => s + r.wait, 0) / n;
+      let ssTot = 0, ssRes = 0;
+      for (const r of rows) {
+        const pred = beta[0] + beta[1]*r.people + beta[2]*r.arrival + beta[3]*r.refill;
+        ssTot += (r.wait - yMean) ** 2;
+        ssRes += (r.wait - pred) ** 2;
+      }
+      const rSquared = ssTot > 0 ? 1 - ssRes / ssTot : null;
+
+      regression = {
+        b0: beta[0],
+        b_people: beta[1],
+        b_arrival: beta[2],
+        b_refill: beta[3],
+        p_refill: pRefill,
+        meanArrival,
+        rSquared,
+        n,
+      };
     }
 
     // ── Time validation ──
@@ -265,13 +347,25 @@
         return;
       }
 
-      const est = Math.max(0, Math.round(regression.a + regression.b * people));
-      document.getElementById("estMinutes").textContent = est;
+      const aMin = arrivalMinutes(timeVal);
+      const base = regression.b0 + regression.b_people * people + regression.b_arrival * aMin;
+      const expected = Math.max(0, base + regression.b_refill * regression.p_refill);
+      document.getElementById("estMinutes").textContent = Math.round(expected);
 
       const count = allData.length;
-      const note = count > 0
-        ? `based on ${count} logged visit${count === 1 ? "" : "s"}`
-        : "using default estimate (~1.5 min/person)";
+      let note;
+      if (count === 0) {
+        note = "using default estimate (~1.5 min/person)";
+      } else {
+        // "If refill happens" delta vs the marginalized expectation
+        const refillExtra = Math.round(Math.max(0, regression.b_refill * (1 - regression.p_refill)));
+        const refillPct = Math.round(regression.p_refill * 100);
+        if (refillExtra > 0 && refillPct > 0 && refillPct < 100) {
+          note = `${count} visits · ~${refillPct}% chance refill adds ~${refillExtra} more min`;
+        } else {
+          note = `based on ${count} logged visit${count === 1 ? "" : "s"}`;
+        }
+      }
       document.getElementById("estNote").textContent = note;
     }
 
@@ -314,11 +408,18 @@
         y: waitMinutes(r),
       })).filter(p => p.y > 0 && p.y < 60);
 
-      // Regression line endpoints
+      // Trend line: slice through the multivariate surface at mean arrival_time and the
+      // expected refill contribution (b_refill · p_refill). This is the most honest 2D
+      // representation of a 4-parameter model when only people_ahead varies on the x-axis.
       const maxX = Math.max(15, ...points.map(p => p.x));
+      const yAt = (x) =>
+        regression.b0
+        + regression.b_people * x
+        + regression.b_arrival * regression.meanArrival
+        + regression.b_refill * regression.p_refill;
       const linePoints = [
-        { x: 0, y: Math.max(0, regression.a) },
-        { x: maxX, y: regression.a + regression.b * maxX },
+        { x: 0, y: Math.max(0, yAt(0)) },
+        { x: maxX, y: Math.max(0, yAt(maxX)) },
       ];
 
       const ctx = document.getElementById("scatterChart").getContext("2d");
@@ -381,13 +482,13 @@
           id: "statsOverlay",
           afterDraw(chart) {
             const { ctx, chartArea: { right, top } } = chart;
-            const r = regression.r != null ? regression.r.toFixed(2) : "—";
+            const rSq = regression.rSquared != null ? regression.rSquared.toFixed(2) : "—";
             const n = regression.n || points.length;
             ctx.save();
             ctx.font = "500 11px Inter, sans-serif";
             ctx.fillStyle = "#8B6F5C";
             ctx.textAlign = "right";
-            ctx.fillText(`r = ${r}`, right - 8, top + 16);
+            ctx.fillText(`R² = ${rSq}`, right - 8, top + 16);
             ctx.fillText(`n = ${n}`, right - 8, top + 30);
             ctx.restore();
           },
